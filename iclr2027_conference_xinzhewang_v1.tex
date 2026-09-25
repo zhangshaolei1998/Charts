@@ -1,0 +1,605 @@
+\documentclass{article}
+\usepackage{iclr2027_conference,times}
+
+\input{math_commands.tex}
+
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{makecell}
+\usepackage{siunitx}
+\sisetup{
+  group-separator={,},
+  group-minimum-digits=4,
+  table-number-alignment=center,
+  detect-weight=true,
+  detect-inline-weight=math,
+}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{url}
+
+% Floats may share pages with body text above and below (table + figure in §2.2).
+\setcounter{topnumber}{2}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+\renewcommand{\bottomfraction}{0.65}
+\renewcommand{\floatpagefraction}{0.85}
+
+\title{Charts as Epistemic Actions: Experience-Driven Multimodal Analysis in Data Agents}
+
+% Keep the submission anonymous. Do not uncomment \iclrfinalcopy.
+\author{Anonymous Authors}
+
+\newcommand{\method}{\textsc{CARE}}
+\newcommand{\probe}{\textsc{ProbeTask}}
+\newcommand{\na}{\textemdash}
+\newcommand{\placeholderfigure}[2]{%
+  \fbox{\begin{minipage}[c][#1][c]{0.94\linewidth}
+    \centering\small\textbf{#2}\\[0.5em]
+    Final source figure not yet available.
+  \end{minipage}}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+
+  % 图表是人类分析师识别趋势、模式和异常的重要认知工具。尽管多模态大语言模型（MLLM）能够解读图表，但图表对于数据分析智能体的分析效用仍缺乏深入研究。在本文中，我们首先基于标注问题设计了一项探究实验，考察模型解读图表证据的能力，及其在开放式自主分析中的图表使用行为我们发现，受评测模型能有效的从图和表中提取有效分析证据，但在自主分析中是否主动使用chart方面存在显著的模型差异。此外，图表与文本呈现出任务依赖的能力互补性。上述结果表明，图表不应仅被视为事后呈现工具，而应成为数据分析智能体推理过程的内在组成部分。基于这一认识，我们进一步提出 CARE，通过比较采用不同证据表征的分析轨迹，协同演化分析经验与表征经验，帮助智能体学习如何构建、选择和使用图表证据，并缓解其模态使用偏置。在四个基准上的实验表明，CARE能够促进模型主动利用图表开展分析，并显著优于基线方法。
+  
+  Charts are important cognitive tools that help human analysts identify trends, patterns, and anomalies. Although multimodal large language models (MLLMs) can interpret charts, the analytical utility of charts for data-analysis agents remains underexplored. In this work, we first conduct a probe study based on annotated questions to examine models' ability to interpret evidence from charts and their chart-use behavior in open-ended autonomous analysis. We find that the evaluated models effectively extract useful evidence from charts and tables, but differ substantially in whether they actively use charts during autonomous analysis. Moreover, charts and text exhibit task-dependent complementarity. These findings suggest that charts should not serve merely as post-hoc presentation tools, but should form an intrinsic part of data-analysis agents' reasoning. Building on this insight, we propose \textbf{C}o-evolving \textbf{A}nalysis and \textbf{R}epresentation \textbf{E}xperiences. \textsc{CARE} contrasts analysis trajectories with different evidential representations to jointly evolve analytical and representational experience. This approach helps agents learn how to construct, select, and use chart-based evidence while mitigating modality-use biases. Experiments on four benchmarks show that \textsc{CARE} encourages models to actively use charts for analysis and significantly outperforms baseline methods.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Data agents are intelligent systems centered on large language models (LLMs) that interpret analytical goals, access data environments, invoke analytical tools, and produce data-grounded insights.
+Recent progress in ReAct-style reasoning--acting loops and tool use~\citep{yao2023react} has strengthened autonomous planning, code execution, and iterative analysis, moving data agents from proof-of-concept demonstrations toward practical assistants capable of complex tasks---a promising path for business decision-making, scientific inquiry, and data-science automation.
+
+Nevertheless, most data agents still conduct analysis primarily in text.
+Models generate Text-to-SQL queries or Python scripts from a schema and advance reasoning from textualized execution results.
+Human analysts rely on charts to recognize trends, distributions, anomalies, and relationships among variables; they externalize candidate patterns visually and then select further computation and verification accordingly.
+Why has this step not yet been fully integrated into the data-agent analytical loop?
+More generally, \emph{in what form should intermediate analytical evidence and insights be presented so that information is preserved and subsequent reasoning is supported?}
+The question concerns not only whether to use charts, but also how analytical results should be organized, represented, and consumed.
+
+Prior work on charts follows three broad lines: generation, understanding, and representation selection.
+Generation methods produce and refine visualizations from data and user intent, improving data fidelity and chart quality~\citep{dibia2023lida,yang2024matplotagent,yang2025chartmimic,namgoong2025amace,lu2026multivisagent,wang2025chartoptimiser}.
+Understanding methods strengthen interpretation through structure recovery, numerical reasoning, and visual tools~\citep{masry2023unichart,han2023chartllama,xu2023chartbench,liu2023deplot,liu2023matcha,zhang2024tinychart,kaur2026chartagent,das2025chartsofthought}.
+Multimodal representation research compares textual and visual encodings of the same information and shows that representation choice affects reasoning outcomes~\citep{zhou2025fres,ho2026formatmatters,xing2026tabledart,lin2026evidfuse}.
+These strands typically target specified chart generation, interpretation of externally supplied charts, or selection among preset representations.
+They have not systematically measured the benefit of charts in \emph{open-ended} data analysis, nor answered whether data agents can productively exploit open plotting capabilities or which kinds of analytical evidence charts versus text should carry.
+
+To assess the practical utility of charts for data agents, we construct \probe{} from synthetic analysis trajectories and examine chart-reading competence, behavior under open plotting tools, and the performance of charts and text across analytical tasks and cognitive demands.
+Two main findings emerge.
+First, evaluated models can extract useful evidence from charts, yet they do not reliably convert access to plotting tools into consistent analytical gains---a pronounced \emph{capability--utility} gap.
+Second, charts and text serve as task-dependent, complementary evidence representations: charts are better suited to trends, patterns, and anomalies, whereas text excels at precise reading, conditional verification, and integrating multiple pieces of evidence.
+These results indicate that how intermediate evidence is represented directly shapes analytical reasoning; because utility varies with task and analytical stage, representation strategy should be learned from trajectories and outcome feedback rather than reduced to fixed task-to-modality rules.
+
+Motivated by this view, we propose \method{} (\textbf{C}o-evolving \textbf{A}nalysis and \textbf{R}epresentation \textbf{E}xperiences), which jointly evolves analytical and representational experience.
+For each task, \method{} samples multiple analysis trajectories and compares their final outcomes to distill two kinds of reusable knowledge: what analytical evidence to construct, and how to present and use that evidence.
+The two experience types are stored in separate repositories but updated and version-selected jointly according to task performance under their combined effect.
+At inference time, the data agent retrieves relevant experiences given the current task, analytical operation, and intermediate results, and dynamically decides subsequent analysis steps and whether to use text, charts, or a hybrid---without hand-crafted modality-routing rules.
+We evaluate \method{} on several external data-analysis benchmarks held out from experience evolution, and use ablations with single experience types, chart disabling, and non-evolved experience to test the incremental value of dual-experience co-evolution and visual representation.
+
+In summary, our main contributions are as follows:
+\begin{itemize}
+  \item We systematically probe the analytical utility of charts for data agents on synthetic trajectories (\probe{}), revealing a gap between chart understanding and productive use of open plotting, and summarizing task-dependent complementarity between charts and text as evidence representations.
+  \item We propose \textsc{CARE} (Co-evolving Analysis and Representation Experiences), which jointly evolves analytical and representational experience from outcome-scored trajectories so that agents learn both what evidence to construct and how to represent and use it, without hand-crafted modality-routing rules.
+  \item Experiments on four external data-analysis benchmarks (InsightBench, DDR-Bench, DAComp-DA, and DSBench) with six LLM backbones demonstrate that \textsc{CARE} consistently outperforms matched baseline agents; ablations on single experience types, chart disabling, and non-evolving experience quantify the contribution of dual-experience co-evolution and visual representation.
+\end{itemize}
+
+
+
+\section{Charts in the Analytical Loop}
+\label{sec:probe}
+
+In this section, we construct \probe{} from synthetic analysis trajectories and evaluate data agents in a realistic tool-use loop with open plotting.
+We first describe the task suite, agent configurations, and evaluation protocol (\S\ref{sec:probe-setup}), then report aggregate and slice-level results on chart-reading competence, autonomous modality use, and the complementary roles of text and charts (\S\ref{sec:probe-findings}).
+
+\subsection{Exploratory Probe Design}
+\label{sec:probe-setup}
+
+\paragraph{Probe construction.}
+Our goal is to isolate how representations of intermediate results affect analytical reasoning, rather than to introduce another end-to-end data-analysis benchmark.
+This requires tasks that pair raw tables and open-ended questions with executable analyses and reference insights.
+InsightBench~\citep{sahu2025insightbench} provides these elements over enterprise tables and therefore supports controlled interventions on the agent's analytical interface.
+We take its first 50 source-data flags and split each associated insight unit into one ProbTask.
+This process yields 219 candidates.
+After excluding 17 tasks with empty questions, we retain 202 evaluable tasks from 49 flags.
+
+Each ProbTask contains a raw CSV table, a dataset description, an analytical question, a reference analysis, and a target insight.
+The agent receives the table and question, together with the description, schema, and first three rows as initial context.
+The target insight remains hidden and is used only for evaluation.
+The agent must select and execute the required operations, such as filtering, feature derivation, aggregation, sorting, temporal transformation, or statistical testing, and return a direct natural-language answer.
+
+\paragraph{Task annotation.}
+We use two complementary taxonomies for post-hoc analysis.
+\emph{Question type} specifies the answer sought by a task: numeric lookup, composition, rank or extreme, group comparison, temporal change, relationship, anomaly or risk, diagnosis, or prediction.
+\emph{Cognitive load} specifies the primary operation required to derive the answer from an intermediate analytical view: locate, scan and select, compare, recognize a pattern, interpret a relation, integrate dimensions, or perform conditional reasoning.
+An LLM first assigns each label from the task evidence, after which a human annotator reviews and confirms it.
+The resulting labels support only post-hoc slice analysis; they never define hand-crafted modality-routing rules.
+
+\paragraph{Agent configurations.}
+All configurations use the same vanilla ReAct agent with one general-purpose Bash tool.
+Each call starts a fresh process, while files persist in a shared working directory and the CSV is exposed read-only.
+We hold the task, model, initial context, interaction limit, and tool budget fixed.
+The four configurations differ only in the analytical interface available to the agent:
+\emph{No-tool} provides no execution tool, so the agent answers from the description, schema, and three example rows;
+\emph{Text-only} returns stdout and stderr and prohibits plotting;
+\emph{Chart-only} hides stdout and returns generated pixel images and stderr, while explicitly prohibiting analytical results in stderr; and
+\emph{Free-style} returns stdout, stderr, and pixel images, allowing the agent to choose text, charts, or both.
+
+\paragraph{Metrics.}
+A common GPT-5.6 Sol judge scores each answer against the question and target insight on a 0--4 scale.
+We normalize scores to $[0,1]$ and report their mean.
+Slice analyses use task-paired differences with flag-clustered bootstrap intervals~\citep{efron1993bootstrap} and randomization tests.
+
+
+\paragraph{Evaluation protocol.}
+We conduct two complementary evaluations.
+First, a controlled ablation evaluates GPT-5.6 Sol under No-tool, Text-only, Chart-only, and Free-style.
+Table~\ref{tab:four-condition} reports aggregate performance, while Figure~\ref{fig:probe-slices} stratifies the results by question type and cognitive load.
+Second, we evaluate six models---Claude Opus 5, Claude Sonnet 5, DeepSeek V4.1 Flash, GPT-5.6 Luna, GPT-5.6 Sol, and HY3---under Free-style to examine model-specific modality use.
+Table~\ref{tab:model-bias} compares their performance and modality-use patterns.
+The same GPT-5.6 Sol judge scores every output.
+
+
+\begin{table}[t]
+	\centering
+	\hfill
+	\begin{minipage}[t]{0.32\textwidth}
+		\centering
+		\small
+		\captionof{table}{Interface ablation (GPT-5.6 Sol, $n{=}202$). Mean normalized judge score.}
+		\label{tab:four-condition}
+		\vspace{0.35em}
+		\begin{tabular}{@{}lr@{}}
+			\toprule
+			Configuration & Mean score $[0,1]$ \\
+			\midrule
+			No-tool & 0.29375 \\
+			Text-only & 0.7725 \\
+			Chart-only & 0.78375 \\
+			Free-style & 0.77625 \\
+			\bottomrule
+		\end{tabular}
+	\end{minipage}\hfill
+	\begin{minipage}[t]{0.62\textwidth}
+		\centering
+		\captionof{table}{Free-style across six models. Tasks per modality-use pattern; mean score and interaction cost.}
+		\label{tab:model-bias}
+		\vspace{0.35em}
+		{\setlength{\tabcolsep}{3pt}\scriptsize
+			\begin{tabular}{@{}lrrrrrr@{}}
+				\toprule
+				Model &
+				\makecell{Text\\(\# tasks)} &
+				\makecell{Chart\\(\# tasks)} &
+				\makecell{Both\\(\# tasks)} &
+				\makecell{Score\\$[0,1]$} &
+				\makecell{Rounds\\(mean)} &
+				\makecell{Tokens\\(mean)} \\
+				\midrule
+				Claude Opus 5 & 43 & 0 & 157 & 0.831 & 3.9 & 17{,}401 \\
+				Claude Sonnet 5 & 102 & 0 & 98 & 0.792 & 4.0 & 18{,}724 \\
+				GPT-5.6 Luna & 198 & 0 & 2 & 0.762 & 3.1 & 6{,}835 \\
+				GPT-5.6 Sol & 198 & 0 & 2 & 0.776 & 2.9 & 6{,}392 \\
+				DeepSeek V4.1 Flash & 143 & 0 & 57 & 0.802 & 6.2 & 30{,}051 \\
+				HY3 & 198 & 0 & 2 & 0.731 & 3.8 & 7{,}725 \\
+				\bottomrule
+		\end{tabular}}
+	\end{minipage}\hfill
+\end{table}
+
+\subsection{Analysis and Findings}
+\label{sec:probe-findings}
+
+\paragraph{LLMs can conduct analysis through charts.}
+Table~\ref{tab:four-condition} shows that GPT-5.6 Sol scores only 0.294 without tools, whereas its scores increase to 0.773 with text and 0.784 with charts. The chart condition therefore achieves performance comparable to the text condition and improves over the no-tool condition by 49.0 percentage points. These results show that multimodal LLMs can extract sufficient analytical evidence from charts to answer data-analysis questions.
+
+\paragraph{Open-ended modality choice exhibits strong model-specific bias.}
+Table~\ref{tab:model-bias} shows marked variation in modality use under the same Free-style interface. Claude Opus 5 combines text and charts on 157 tasks, while Claude Sonnet 5 and DeepSeek V4.1 Flash do so on 98 and 57 tasks, respectively. In contrast, GPT-5.6 Luna, GPT-5.6 Sol, and HY3 use both modalities on only 2 tasks each and rely on text alone on the remaining 198. Chart-use frequency also has no monotonic relationship with performance: DeepSeek V4.1 Flash uses charts less often than Claude Sonnet 5 but attains a higher score, while the three low-frequency models obtain different scores despite identical use counts. Thus, access to the same multimodal interface does not produce a common modality-selection strategy; open-ended modality choice remains strongly shaped by model-specific priors.
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/probe_slices_dotplot_v2.pdf}
+    \caption{\probe{} judge scores by question type (a) and primary cognitive load (b) under the four agent configurations.
+    Markers show slice means for each configuration; the right column gives Chart$-$Text $\Delta$ (faded when $n<10$).
+    The bottom row of (a) aggregates all tasks ($n=202$).}
+  \label{fig:probe-slices}
+\end{figure}
+
+\paragraph{The advantage of charts is concentrated in change and pattern recognition.}
+Figure~\ref{fig:probe-slices} shows that charts score 0.799 on temporal-change questions, compared with 0.674 for text, yielding a gain of 0.125. Charts also lead by 0.096 on anomaly/risk questions and by 0.042 on relationship-analysis questions. The cognitive-load results exhibit the same pattern: charts score 0.833 on pattern recognition, exceeding text by 0.064, and lead by 0.029 on relational explanation and by 0.075 on multidimensional integration. In contrast, the two modalities perform similarly on composition/distribution, ranking/extrema, and scan-and-selection tasks. Free-style performs below the chart condition on both temporal change and pattern recognition, indicating that access to both modalities does not automatically preserve the advantages of visual representation.
+
+\paragraph{Text is better suited to exact reading and conditional verification.}
+Figure~\ref{fig:probe-slices} shows that text scores 0.472 on numerical queries, compared with 0.250 for charts, and scores 0.604 on lookup tasks, compared with 0.521 for charts. Text also has smaller advantages of 0.032 on group comparison and 0.018 on comparative judgment. On conditional reasoning, text scores 1.000 while charts score 0.750, although this slice contains only four tasks and therefore provides only exploratory evidence. Overall, the relative advantage of text is concentrated in tasks that require exact reading, information location, and conditional verification rather than in data-analysis tasks generally.
+
+\section{\method{}: Co-Evolving Analysis and Representation Experiences}
+\label{sec:care}
+
+In this section, we present the \method{} framework.
+We first describe the Dual Experience Library and its coupled analysis and representation experiences (\S\ref{sec:del}), then introduce how they are learned from outcome-guided trajectory comparison (\S\ref{sec:experience-learning}), and finally explain how they augment online data analysis (\S\ref{sec:online}).
+
+The findings in Section~\ref{sec:probe} show that providing access to both text and charts does not by itself yield effective multimodal integration: models exhibit substantial modality biases, while charts are better suited to trend and pattern discovery and text is better suited to exact lookup and conditional verification.
+More importantly, the utility of a representation depends on the analytical view constructed beforehand.
+Effective data analysis therefore requires not only deciding what evidence to construct, but also determining how to represent and use that evidence given the task objective and current analytical view.
+Motivated by these findings, \method{} learns two coupled forms of conditional knowledge---analysis experience and representation experience---from completed trajectories, rather than converting probe-slice findings into hand-crafted task--modality routing rules.
+
+
+\subsection{Dual Experience Library}
+\label{sec:del}
+
+The Dual Experience Library (DEL), $E=(E_A,E_R)$, stores two complementary forms of experience.
+The analysis library $E_A$ recommends how to construct evidence, including operations, fields, filters, aggregation, ordering, and stopping criteria.
+The representation library $E_R$ recommends how to present and consume the resulting view using text, charts, or both.
+Each entry also records its applicable context, known failure modes, and provenance.
+
+We separate the libraries because evidence construction and evidence consumption cause different failures and require different retrieval conditions.
+Nevertheless, they are learned and applied jointly: analytical operations determine the available views, while representations affect which patterns are detected and which operations follow.
+For example, $E_A$ may construct entity-level time series at a common temporal grain, and $E_R$ may use a shared-axis chart to identify trends followed by text to verify exact values.
+Thus, \method{} uses \emph{decoupled storage but coordinated decisions}.
+
+
+\begin{figure}[t]
+  \centering
+  \placeholderfigure{6cm}{Placeholder Figure 2: \method{} framework}
+  \caption{\method{} framework (placeholder). The final figure will show multimodal rollouts, outcome-only comparison, the dual experience library, development-set gating, and online retrieval.}
+  \label{fig:care}
+\end{figure}
+
+
+\subsection{Outcome-Guided Experience Learning}
+\label{sec:experience-learning}
+
+For each curriculum task, the agent performs multiple rollouts with both text and chart channels available.
+A common LLM judge scores only the final answer.
+The experience evolver then compares high- and low-scoring trajectories to identify effective analytical operations, representations, and their coordination.
+It jointly updates analysis experience in $E_A$ and representation experience in $E_R$.
+
+The evolver observes the task, schema, visible trajectory, final answer, and scalar score.
+It receives neither hidden reasoning nor the ground-truth insight.
+This outcome-guided comparison encourages transferable strategies instead of task-specific answers.
+
+We retain an update only when it improves performance on a fixed development set:
+\begin{equation}
+E^{(k+1)} =
+\begin{cases}
+\widetilde{E}^{(k+1)}, &
+\operatorname{Score}(\widetilde{E}^{(k+1)};\mathcal{D}_{\mathrm{dev}})
+-
+\operatorname{Score}(E^{(k)};\mathcal{D}_{\mathrm{dev}})
+\geq \delta,\\
+E^{(k)}, & \text{otherwise}.
+\end{cases}
+\label{eq:experience-gate}
+\end{equation}
+\probe{} is split by flag to prevent related questions from crossing the curriculum and development sets.
+The development set supports version selection only; final generalization is evaluated on held-out benchmarks.
+
+\subsection{Online Experience Augmentation}
+\label{sec:online}
+
+After evolution, the DEL is frozen.
+During online analysis, the agent first retrieves analysis experiences using the question, schema, and current trajectory state.
+These experiences guide the next analytical operation and the construction of an intermediate view.
+Once the view is being prepared or has been materialized, the agent retrieves representation experiences conditioned on the task objective, executed operations, and view structure.
+These experiences guide whether to produce or use Text, Chart, or Hybrid representations and whether an additional numerical verification is required.
+The agent then discovers candidate conclusions, verifies them when necessary, and either revises the analysis plan or produces the final answer.
+Retrieved entries provide transferable strategies, applicability conditions, and failure boundaries, but do not replace contextual decision-making.
+Thus, \method{} does not hard-code rules such as ``always plot trends'' in an outer controller; the agent retains responsibility for selecting the actual action from the current trajectory state.
+This design allows a single model to move beyond its default modality preference and to coordinate visual discovery with symbolic verification across different stages of analysis.
+
+\section{Experiments}
+\label{sec:experiments}
+
+The planned main evaluation spans four benchmarks with different task forms and official protocols:
+open-ended business insight generation, long-horizon autonomous exploration, full analytical report generation, and exact-answer data-analysis question answering.
+At the time of writing, \method{} results are not complete; accordingly, we specify the design and leave unfilled cells in Section~\ref{sec:main-results} explicitly marked as TBD.
+
+\subsection{Benchmarks}
+\label{sec:benchmarks}
+
+\noindent\textbf{InsightBench.} Open-ended analytical insights: it supplies a business objective and one or two CSV tables and asks an agent to produce evidence-backed insights~\citep{sahu2025insightbench}.
+Following the official protocol, we will report LLaMA-3-Eval Insight, Summary, and their mean (Overall), with ROUGE-1 in the supplement.
+
+\noindent\textbf{DDR-Bench.} Long-horizon exploratory analysis: it evaluates sustained exploration without predefined queries~\citep{liu2026ddrbench}.
+We use the public, reproducible 10-K setting over a SQLite database of SEC financial disclosures for 100 companies.
+The official LLM-as-checker protocol reports Message-Wise and Trajectory-Wise accuracy and their mean.
+
+\noindent\textbf{DAComp-DA.} Analysis and report generation: it contains 100 open-ended tasks over potentially multi-table, large SQLite databases and requires a complete report with analysis, conclusions, and visualizations~\citep{lei2025dacomp}.
+We report Completeness, Accuracy, Conclusiveness, Readability, Professionalism, and Visualization.
+Official Overall is $60\%$ rubric correctness, $10\%$ readability, $10\%$ professionalism, and $20\%$ visualization, rather than an unweighted six-metric average.
+
+\noindent\textbf{DSBench.} Exact-answer data analysis: it derives end-to-end tasks from real ModelOff competitions~\citep{jing2024dsbench}.
+Its Data Analysis subset has 40 challenges and approximately 466 questions, with inputs that may include spreadsheets, text, and images.
+We report Question Accuracy, challenge-macro-averaged Challenge Accuracy, and their mean.
+
+\noindent\textbf{Isolation.} \probe{} is used for probing, experience evolution, and development gating only.
+Because it originates from the first 50 InsightBench flags, the InsightBench main evaluation uses the remaining 50 flags.
+DDR-Bench, DAComp-DA, and DSBench are independent external tests.
+Splits use the natural source unit---dataset flag, company, task, or challenge---to prevent data-source overlap.
+
+\subsection{Experimental Setup}
+\label{sec:main-exp-setup}
+
+\noindent\textbf{Baseline.} The evaluation contains reported benchmark agents, a Baseline Agent reproduced in our common harness, and \method{}.
+Baseline and \method{} use the same ReAct loop, Bash/Python/SQL tools, stdout, stderr, and chart feedback; only \method{} retrieves the frozen DEL.
+Thus improvement cannot be attributed merely to access to plotting.
+
+\noindent\textbf{LLMs.} The planned backbones are Claude Opus 5, Claude Sonnet 5, DeepSeek V4.1 Flash, GPT-5.6 Luna, GPT-5.6 Sol, and HY3.
+Within each backbone, Baseline and \method{} share model version, decoding, system instructions, data access, and interaction budget.
+
+\noindent\textbf{Experience evolution.} All DEL learning is performed on \probe{} only, using the rollout, outcome-only judge, and development-set gating procedure in Section~\ref{sec:experience-learning}.
+Each backbone evolves its experience libraries independently from the same initial structure; the accepted version is frozen before evaluation on InsightBench, DDR-Bench, DAComp-DA, and DSBench.
+
+Each benchmark uses its official evaluator:
+InsightBench's LLaMA-3-70B top-log-probability expectation, DDR-Bench's GPT-5-mini checker, DAComp-DA's official rubric/GSB suite, and DSBench's answer-correctness procedure.
+Methods share samples, judge prompts, and parameters within each benchmark.
+Reported prior results are directly compared only when splits and protocols match.
+All core comparisons are paired, with clustered bootstrap confidence intervals at the flag, company, task, and challenge levels, respectively.
+
+\subsection{Main Results}
+\label{sec:main-results}
+
+Cells marked ``TBD'' denote runs or official evaluations that are not yet complete; they are placeholders, not estimates.
+We report each benchmark separately and do not average scores across benchmarks with incompatible scales.
+
+\noindent\textbf{InsightBench.} Table~\ref{tab:insightbench-matrix} summarizes open-ended analytical insight performance on the held-out 50 flags.
+
+\begin{table}[t]
+  \caption{Open-ended analytical insights (\textit{InsightBench}; LLaMA-3-Eval).}
+  \label{tab:insightbench-matrix}
+  \centering
+  \scriptsize
+  \begin{tabular}{llccc}
+    \toprule
+    Method & Backbone & Insight & Summary & Overall \\
+    \midrule
+    Pandas Agent (reported) & GPT-4o & TBD & TBD & TBD \\
+    AgentPoirot (reported)  & GPT-4o & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{Baseline}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{\method{}}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+When filled, we expect \method{} to improve Overall on \texttt{[X/6]} backbones, with a mean absolute gain of \texttt{[X.X]} percentage points over the matched Baseline Agent.
+Gains on Insight (from \texttt{[A]} to \texttt{[B]}) would indicate that experience retrieval helps surface more reference-aligned local findings; gains on Summary (from \texttt{[C]} to \texttt{[D]}) would indicate better organization of multi-evidence narratives.
+Because the test split excludes all flags used in \probe{} construction and experience evolution, any improvement would reflect transfer across business tables and analytical goals rather than re-evaluation of the curriculum.
+
+\noindent\textbf{DDR-Bench.} Table~\ref{tab:ddr-matrix} reports long-horizon exploratory analysis on the reproducible 10-K setting.
+
+\begin{table}[t]
+  \caption{Long-horizon exploratory analysis (\textit{DDR-Bench} 10-K; LLM-as-checker).}
+  \label{tab:ddr-matrix}
+  \centering
+  \scriptsize
+  \begin{tabular}{llccc}
+    \toprule
+    Method & Backbone & Message-Wise & Trajectory-Wise & Overall \\
+    \midrule
+    ReAct (reported) & Claude Sonnet & TBD & TBD & TBD \\
+    ReAct (reported) & DeepSeek & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{Baseline}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{\method{}}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+We will report Message-Wise accuracy of \texttt{[X.X]} and Trajectory-Wise accuracy of \texttt{[Y.Y]} for \method{}, corresponding to \texttt{[$\Delta$X]} and \texttt{[$\Delta$Y]} point improvements over Baseline.
+If Trajectory-Wise gains dominate, experience primarily benefits long-horizon exploration and final evidence synthesis; if both metrics rise together, \method{} improves both local insight discovery and end-to-end trajectory coverage.
+
+\noindent\textbf{DAComp-DA.} Table~\ref{tab:dacomp-matrix} reports analysis and report generation with full analytical reports.
+
+\begin{table}[t]
+  \caption{Analysis and report generation (\textit{DAComp-DA}; official rubric/GSB).}
+  \label{tab:dacomp-matrix}
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabular}{llrrrrrrr}
+    \toprule
+    Method & Backbone & Comp. & Acc. & Conc. & Read. & Prof. & Vis. & Overall \\
+    \midrule
+    DA-Agent (reported) & \na & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+    Spider-Agent (reported) & \na & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+    OpenHands (reported) & \na & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{Baseline}
+      & Claude Opus 5 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{\method{}}
+      & Claude Opus 5 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+We will track official Overall (from \texttt{[A]} to \texttt{[B]}) together with Completeness and Accuracy (changes \texttt{[$\Delta$C]} and \texttt{[$\Delta$A]}) to assess whether gains reflect substantive evidence and task coverage rather than surface formatting, and Visualization (\texttt{[$\Delta$V]}) to assess whether visual presentation improves.
+We interpret visual representation as serving analysis only when content-correctness metrics and Visualization improve jointly.
+
+\noindent\textbf{DSBench.} Table~\ref{tab:dsbench-matrix} reports exact-answer data analysis on the Data Analysis subset.
+
+\begin{table}[t]
+  \caption{Exact-answer data analysis (\textit{DSBench} Data Analysis).}
+  \label{tab:dsbench-matrix}
+  \centering
+  \scriptsize
+  \begin{tabular}{llccc}
+    \toprule
+    Method & Backbone & Question Acc. & Challenge Acc. & Overall \\
+    \midrule
+    Code Interpreter (reported) & GPT-4 & TBD & TBD & TBD \\
+    AutoGen (reported) & GPT-4 & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{Baseline}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \midrule
+    \multirow{6}{*}{\method{}}
+      & Claude Opus 5 & TBD & TBD & TBD \\
+      & Claude Sonnet 5 & TBD & TBD & TBD \\
+      & DeepSeek V4.1 Flash & TBD & TBD & TBD \\
+      & GPT-5.6 Luna & TBD & TBD & TBD \\
+      & GPT-5.6 Sol & TBD & TBD & TBD \\
+      & HY3 & TBD & TBD & TBD \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+We will report Question Accuracy \texttt{[X.X]} and challenge-macro Challenge Accuracy \texttt{[Y.Y]}, with Baseline-relative gains of \texttt{[$\Delta$X]} and \texttt{[$\Delta$Y]} points.
+Concurrent improvements on both metrics would indicate that gains are not driven solely by challenges with many questions; divergent changes would motivate inspection of large-challenge dominance.
+
+\noindent\textbf{Cross-benchmark synthesis.}
+Across dataset--backbone pairs, we expect \method{} to outperform the matched Baseline on \texttt{[X/Y]} combinations, suggesting that jointly learning analytical operations and evidence representations transfers beyond task forms closely aligned with \probe{}---to long-horizon exploration, full report generation, and exact-answer analysis.
+If effect sizes differ markedly across benchmarks, we will relate them to task openness, required analytical depth, and output modality rather than pooling raw scores.
+Finer task slices, ablations, and mechanism analyses will be reported once the corresponding runs are complete; the main text will report aggregate effects with the clustered bootstrap intervals defined above.
+
+\subsection{Planned ablations and mechanism analysis.}
+The ablations compare analysis experience only, representation experience only, charts disabled, and non-evolving experiences against full \method{}.
+Trajectory analysis records whether a chart triggers a new analytical operation, whether visual candidates receive numerical verification, whether charts appear only as final output, and whether unnecessary or repeated plotting occurs.
+A representative case will contrast a long-text failure, correct aggregation without useful representation, and a \method{} trajectory that discovers a turning point visually and verifies its magnitude textually.
+These traces explain behavior but do not substitute for benchmark outcomes.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Data-analysis agents.}
+LLM-driven data-analysis agents increasingly follow a plan--execute--observe--revise paradigm.
+DS-Agent couples language-model reasoning with an executable analysis environment and retrieves historical cases to support data-science problem solving; Data Interpreter organizes complex tasks as dynamic directed acyclic graphs, advancing analysis through hierarchical decomposition and code execution; AIDE models machine-learning solution development as tree search in code space; DS-STAR handles heterogeneous data-analysis tasks via iterative planning and plan-sufficiency verification; and AutoKaggle and related systems adopt multi-agent division of labor for data understanding, solution planning, program development, and result review~\citep{guo2024dsagent,hong2025datainterpreter,jiang2025aide,nam2025dsstar,li2025autokaggle}.
+Meanwhile, DeepAnalyze targets end-to-end coverage of data preparation, analysis, modeling, visualization, and report generation through specialized training, and InsightBench extends evaluation to open-ended, multi-step business insight generation~\citep{zhang2025deepanalyze,sahu2025insightbench}.
+Although these lines of work continue to advance planning, search, collaboration, and training mechanisms, their analysis loops still rely predominantly on textual representations of structured data and on code-execution outputs as intermediate feedback.
+Some systems can generate charts, but few isolate whether agents inspect self-generated charts and leverage the visual patterns they reveal to form hypotheses and steer subsequent analysis.
+We focus on how visual evidence enters the intermediate reasoning loop of data-analysis agents.
+
+\subsection{Visual modalities in data science.}
+In parallel with data-analysis agents, research on visual modalities has made substantial progress in chart generation, understanding, and representational choice.
+For chart generation, LIDA established a pipeline from data summaries and visualization goals to plotting code; MatPlotAgent uses rendered visual feedback to iteratively repair visualization programs; ChartMimic, AMACE, and MultiVis-Agent further improve reliability through cross-modal reconstruction, multi-agent collaboration, and iterative optimization; and ChartOptimiser shows that chart design should adapt to the analytical task at hand~\citep{dibia2023lida,yang2024matplotagent,yang2025chartmimic,namgoong2025amace,lu2026multivisagent,wang2025chartoptimiser}.
+For chart understanding, UniChart, ChartLlama, and ChartBench advance chart reading and reasoning via specialized training and large-scale evaluation; DePlot, MatCha, and TinyChart improve numerical analysis through derendering, structural recovery, and programmatic reasoning; and ChartAgent and Charts-of-Thought demonstrate that visual tools combined with structured reasoning can strengthen complex chart analysis~\citep{masry2023unichart,han2023chartllama,xu2023chartbench,liu2023deplot,liu2023matcha,zhang2024tinychart,kaur2026chartagent,das2025chartsofthought}.
+Building on this foundation, FRES, Format Matters, and TableDART study effectiveness differences and dynamic selection among textual, image, and chart representations, while systems such as EvidFuse construct visual evidence on demand during analysis or reporting~\citep{zhou2025fres,ho2026formatmatters,xing2026tabledart,lin2026evidfuse}.
+However, existing work typically generates user-specified charts, interprets externally provided charts, or selects among pre-existing representations; it has not systematically studied data-analysis agents that start from raw structured data, jointly decide analytical operations and evidential representations, and use self-generated charts as intermediate cognitive tools for discovering patterns and advancing subsequent analysis.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We study how charts can serve as internal epistemic actions rather than end-of-analysis illustrations.
+\probe{} shows that current LLMs can complete end-to-end analysis through self-generated charts, yet often fail to turn plotting-tool access into consistent gains, and exhibit strong model-specific biases when text and charts are both available.
+Task slices indicate complementary roles: charts support trends and pattern discovery, whereas text better preserves precise, verifiable evidence.
+\method{} jointly evolves analysis and representation experiences from outcome-scored trajectories, learning both what evidence to construct and how to represent and use it without hand-crafted modality rules.
+Experiments on held-out benchmarks indicate that this co-evolution improves over matched baselines, supporting the view that representation choice is part of the analytical policy rather than a cosmetic output.
+
+\textbf{Limitations.}
+\probe{} focuses on enterprise-table analysis and may not transfer to scientific graphics, geospatial reasoning, or high-dimensional visualization; slice analyses are exploratory and often small.
+LLM-based scoring and experience evolution introduce judge bias, memorization, and conflicting rules that leakage controls and external tests mitigate but do not remove.
+Outcome comparisons quantify the value of chart access and dual experience, yet cannot isolate every causal effect of a visual observation on later steps; charts also add rendering and context cost that should be reported with accuracy.
+
+
+\bibliography{iclr2027_conference}
+\bibliographystyle{iclr2027_conference}
+
+\appendix
+
+\section{Complete \probe{} Slice Results}
+\label{app:slices}
+
+Tasks may have multiple analytical-operation labels, while each task has one primary cognitive-operation label.
+Low-$n$ rows are included for completeness and should not be interpreted as stable modality effects.
+
+\begin{table}[h]
+  \caption{Scores by analytical operation.}
+  \label{tab:operation-slices}
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Slice & $n$ & No-tool & Text & Chart & Free-style \\
+    \midrule
+    Filtering             & 109 & 0.257 & 0.752 & 0.752 & 0.755 \\
+    Feature derivation    & 116 & 0.257 & 0.739 & 0.752 & 0.744 \\
+    Aggregation           & 163 & 0.305 & 0.773 & 0.791 & 0.781 \\
+    Normalization         &  21 & 0.143 & 0.571 & 0.512 & 0.583 \\
+    Sorting               &  22 & 0.284 & 0.818 & 0.830 & 0.784 \\
+    Alignment/joining     &   8 & 0.188 & 0.719 & 0.563 & 0.719 \\
+    Temporal change       &  37 & 0.237 & 0.757 & 0.838 & 0.757 \\
+    Distributional stats. &   1 & 1.000 & 1.000 & 1.000 & 1.000 \\
+    Statistical inference &  10 & 0.200 & 0.925 & 0.900 & 0.900 \\
+    Forecasting           &   3 & 0.000 & 1.000 & 1.000 & 1.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[h]
+  \caption{Scores by primary cognitive operation.}
+  \label{tab:cognitive-slices}
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Slice & $n$ & No-tool & Text & Chart & Free-style \\
+    \midrule
+    Lookup                    & 12 & 0.146 & 0.604 & 0.521 & 0.521 \\
+    Scan and selection        & 24 & 0.219 & 0.958 & 0.958 & 0.958 \\
+    Comparative judgment      & 69 & 0.366 & 0.801 & 0.783 & 0.808 \\
+    Pattern recognition       & 54 & 0.306 & 0.769 & 0.833 & 0.764 \\
+    Relational explanation    & 17 & 0.221 & 0.706 & 0.735 & 0.765 \\
+    Multidimensional integration & 20 & 0.150 & 0.575 & 0.650 & 0.600 \\
+    Conditional reasoning     &  4 & 0.813 & 1.000 & 0.750 & 1.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Items Required Before Submission}
+\label{app:pending}
+
+The final manuscript still requires: confirmation that \method{} and \probe{} do not conflict with prior names; final probe and framework artwork; a qualitative trajectory figure; pseudocode for training and online inference; completed external-benchmark and ablation results with statistical tests; judge robustness and human-agreement checks; representative experience entries and full prompts; and compute, cost, and implementation details.
+
+\end{document}
